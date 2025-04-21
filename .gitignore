@@ -4,3 +4,4 @@
 *.db-wal
 
 .DS_Store
+snapshot_files.db

@@ -1,7 +1,7 @@
 package sources
 
 type Source interface {
-	ListFiles() ([]FileInfo, error)
+	ListFiles() <-chan FileInfo
 	GetFile(string) ([]byte, error)
 	SaveFile(string, []byte, string) error
 	Exists(string) bool

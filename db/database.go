@@ -2,16 +2,22 @@ package db
 
 import (
 	"database/sql"
-	"log"
+	"fmt"
 	_ "modernc.org/sqlite"
-	"strconv"
 )
 
 func InitDB(filename string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", filename)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Ensure database is closed on error
+	defer func() {
+		if err != nil {
+			db.Close()
+		}
+	}()
 
 	createTable := `
 	CREATE TABLE IF NOT EXISTS snapshot_files (
@@ -19,47 +25,55 @@ func InitDB(filename string) (*sql.DB, error) {
 		md5 TEXT NOT NULL,
 		permission TEXT,
 		snapshot_id INTEGER,
-		remote_hash TEXT
+		remote_hash TEXT,
+		status TEXT DEFAULT 'pending'
 	);
 	CREATE TABLE IF NOT EXISTS snapshots (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		date TEXT NOT NULL,
 		status TEXT DEFAULT 'pending'
-	); `
-	if _, err := db.Exec(createTable); err != nil {
-		return nil, err
+	);`
+
+	if _, err = db.Exec(createTable); err != nil {
+		return nil, fmt.Errorf("failed to create tables: %w", err)
 	}
 
 	return db, nil
 }
 
-func SaveFileInfo(db *sql.DB, original_path string, md5 string, permission string, snapshot_id int, remote_hash string) error {
-
-	// Begin a transaction
+func SaveFileInfo(db *sql.DB, originalPath, md5, permission string, snapshotID int, remoteHash, status string) error {
 	tx, err := db.Begin()
 	if err != nil {
-		log.Fatal("begin tx:", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	// Prepare statement
-	stmt, err := tx.Prepare("INSERT OR REPLACE INTO snapshot_files (original_path, md5, permission, snapshot_id, remote_hash) VALUES (?, ?, ?, ?, ?)")
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	stmt, err := tx.Prepare(`
+		INSERT OR REPLACE INTO snapshot_files 
+		(original_path, md5, permission, snapshot_id, remote_hash, status) 
+		VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
-		log.Fatal("prepare stmt:", err)
+		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
 	defer stmt.Close()
 
-	// Execute insert
-	_, err = stmt.Exec(original_path, md5, permission, strconv.Itoa(snapshot_id), remote_hash)
+	_, err = stmt.Exec(originalPath, md5, permission, snapshotID, remoteHash, status)
 	if err != nil {
-		tx.Rollback()
-		log.Fatal("insert error:", err)
+		return fmt.Errorf("failed to execute statement: %w", err)
 	}
 
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
-		log.Fatal("commit error:", err)
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
 	return nil
-
 }
 
 type FileRecord struct {
@@ -68,10 +82,11 @@ type FileRecord struct {
 	Permission string
 	SnapId     int
 	RemoteHash string
+	Status     string
 }
 
 func ListFiles(db *sql.DB) ([]FileRecord, error) {
-	rows, err := db.Query(`SELECT original_path, md5, permission, snapshot_id, remote_hash FROM snapshot_files ORDER BY original_path`)
+	rows, err := db.Query(`SELECT original_path, md5, permission, snapshot_id, remote_hash, status FROM snapshot_files ORDER BY original_path`)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +97,7 @@ func ListFiles(db *sql.DB) ([]FileRecord, error) {
 	for rows.Next() {
 		var f FileRecord
 		// var modTimeStr string
-		if err := rows.Scan(&f.Path, &f.MD5, &f.Permission, &f.SnapId, &f.RemoteHash); err != nil {
+		if err := rows.Scan(&f.Path, &f.MD5, &f.Permission, &f.SnapId, &f.RemoteHash, &f.Status); err != nil {
 			return nil, err
 		}
 		// f.Modified, _ = time.Parse(time.RFC3339, modTimeStr)
@@ -93,8 +108,8 @@ func ListFiles(db *sql.DB) ([]FileRecord, error) {
 
 func GetFileByHash(db *sql.DB, hash string) (*FileRecord, error) {
 	var f FileRecord
-	query := `SELECT original_path, md5, permission, snapshot_id, remote_hash FROM snapshot_files WHERE md5 = ?`
-	err := db.QueryRow(query, hash).Scan(&f.Path, &f.MD5, &f.Permission, &f.SnapId, &f.RemoteHash)
+	query := `SELECT original_path, md5, permission, snapshot_id, remote_hash, status FROM snapshot_files WHERE md5 = ?`
+	err := db.QueryRow(query, hash).Scan(&f.Path, &f.MD5, &f.Permission, &f.SnapId, &f.RemoteHash, &f.Status)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No matching record found
@@ -105,7 +120,7 @@ func GetFileByHash(db *sql.DB, hash string) (*FileRecord, error) {
 }
 
 func ListFilesbySnapshot(db *sql.DB, snapshot_id int) ([]FileRecord, error) {
-	rows, err := db.Query(`SELECT original_path, md5, permission, snapshot_id, remote_hash FROM snapshot_files WHERE snapshot_id = ? ORDER BY original_path`, snapshot_id)
+	rows, err := db.Query(`SELECT original_path, md5, permission, snapshot_id, remote_hash,status FROM snapshot_files WHERE snapshot_id = ? ORDER BY original_path`, snapshot_id)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +128,7 @@ func ListFilesbySnapshot(db *sql.DB, snapshot_id int) ([]FileRecord, error) {
 	var files []FileRecord
 	for rows.Next() {
 		var f FileRecord
-		if err := rows.Scan(&f.Path, &f.MD5, &f.Permission, &f.SnapId, &f.RemoteHash); err != nil {
+		if err := rows.Scan(&f.Path, &f.MD5, &f.Permission, &f.SnapId, &f.RemoteHash, &f.Status); err != nil {
 			return nil, err
 		}
 		files = append(files, f)
@@ -187,4 +202,27 @@ func GetLastSnap(db *sql.DB) (*SnapShotRecord, error) {
 		return nil, err
 	}
 	return &f, nil
+}
+
+func UpdateSnapshotFileField(db *sql.DB, recordID int, fieldName string, newValue any) error {
+	// Validate field name to prevent SQL injection
+	validFields := map[string]bool{
+		"original_path": true,
+		"md5":           true,
+		"permission":    true,
+		"snapshot_id":   true,
+		"remote_hash":   true,
+		"status":        true,
+	}
+	if !validFields[fieldName] {
+		return fmt.Errorf("invalid field name: %s", fieldName)
+	}
+
+	query := fmt.Sprintf("UPDATE snapshot_files SET %s = ? WHERE id = ?", fieldName)
+	_, err := db.Exec(query, newValue, recordID)
+	if err != nil {
+		return fmt.Errorf("failed to update field: %w", err)
+	}
+
+	return nil
 }
