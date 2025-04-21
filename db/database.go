@@ -48,10 +48,14 @@ func SaveFileInfo(db *sql.DB, originalPath, md5, permission string, snapshotID i
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			tx.Rollback()
+			if er := tx.Rollback(); er != nil {
+				panic(er)
+			}
 			panic(p)
 		} else if err != nil {
-			tx.Rollback()
+			if er := tx.Rollback(); er != nil {
+				panic(er)
+			}
 		}
 	}()
 
