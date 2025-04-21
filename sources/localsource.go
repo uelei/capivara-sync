@@ -1,20 +1,17 @@
 package sources
 
 import (
+	"bytes"
 	"crypto/md5"
 	"fmt"
+	"github.com/klauspost/compress/zstd"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"bytes"
-
-	"github.com/klauspost/compress/zstd"
 )
-
-import log "github.com/sirupsen/logrus"
 
 type Localsource struct {
 	Localpath string
@@ -34,7 +31,11 @@ func (l Localsource) GetFileHash(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Error("Error closing database file:", err)
+		}
+	}()
 
 	hash := md5.New()
 	if _, err := io.Copy(hash, file); err != nil {
@@ -87,10 +88,16 @@ func (l Localsource) CompressAndSaveFile(path string, data []byte) error {
 	remote_file_name := l.Localpath + path + ".zst"
 	out, _ := os.Create(remote_file_name)
 	encoder, _ := zstd.NewWriter(out, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
-	io.Copy(encoder, reader)
-	encoder.Close()
+	if _, err := io.Copy(encoder, reader); err != nil {
+		log.Error("Error compressing file:", err)
+	}
+	if err := encoder.Close(); err != nil {
+		log.Error("Error closing encoder:", err)
+	}
 	// in.Close()
-	out.Close()
+	if err := out.Close(); err != nil {
+		log.Error("Error closing file:", err)
+	}
 
 	fmt.Println("File saved:", path)
 	return nil
@@ -140,70 +147,33 @@ func FileModeFromString(permStr string) (os.FileMode, error) {
 	return mode, nil
 }
 
-func (l Localsource) ListFiles() ([]FileInfo, error) {
+func (l Localsource) ListFiles() <-chan FileInfo {
+	ch := make(chan FileInfo)
+	go func() {
+		defer close(ch)
 
-	var fileNames []FileInfo
-	err := filepath.WalkDir(l.Localpath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			relative_path := strings.ReplaceAll(path, l.Localpath, "")
-			md5sum, _ := l.GetFileHash(relative_path)
-			info, err := d.Info()
+		err := filepath.WalkDir(l.Localpath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
-			log.Debug("File:", path, md5sum, relative_path, info.Mode().String())
-			fileNames = append(fileNames, FileInfo{Path: relative_path, Md5: md5sum, Filename: d.Name(), Permission: info.Mode().Perm().String()})
+			if !d.IsDir() {
+				relative_path := strings.ReplaceAll(path, l.Localpath, "")
+				md5sum, _ := l.GetFileHash(relative_path)
+				info, err := d.Info()
+				if err != nil {
+					log.Fatal(err)
+				}
+				log.Debug("File:", path, md5sum, relative_path, info.Mode().String())
+				ch <- FileInfo{Path: relative_path, Md5: md5sum, Filename: d.Name(), Permission: info.Mode().Perm().String()}
+			}
+			return nil
+		})
+
+		if err != nil {
+			fmt.Printf("Error walking directory: %v\n", err)
+			// return nil
 		}
-		return nil
-	})
+	}()
 
-	if err != nil {
-		fmt.Printf("Error walking directory: %v\n", err)
-		return nil, err
-	}
-
-	// fmt.Println("Collected Files:")
-	// for _, path := range fileNames {
-	// 	fmt.Println(path)
-	// }
-
-	// files, err := os.ReadAll(l.Localpath)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	//
-	// for _, file := range files {
-	// 	if !file.IsDir() {
-	// 		fileNames = append(fileNames, file.Name())
-	// 	}
-	// }
-	return fileNames, nil
+	return ch
 }
-
-// func Restore(source Source, remote Source, database *sql.DB) error {
-//
-// 	files, err := db.ListFiles(database)
-//
-// 	if err != nil {
-// 		log.Fatalf("Error listing files: %v", err)
-// 	}
-// 	// fmt.Println("Files in folder:")
-// 	for _, file := range files {
-// 		fmt.Println("file name is : " + file.Path)
-// 		in, error := source.GetFile("block_" + file.MD5 + ".zst")
-// 		if error != nil {
-// 			log.Error("Error getting file:", error)
-// 		}
-//
-// 		out, errr := compressor.DecompressZstd(in)
-// 		if errr != nil {
-// 			fmt.Println("Error decompressing file:", errr)
-// 		}
-//
-// 		remote.SaveFile(file.Path, out, file.Permission)
-// 	}
-// 	return nil
-// }

@@ -5,20 +5,11 @@ package cmd
 
 import (
 	"fmt"
-
-	"uelei/capivara-sync/db"
-	"uelei/capivara-sync/sources"
-
-	"github.com/spf13/cobra"
-
-	"strings"
-	"syscall"
-
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/term"
-	"uelei/capivara-sync/handlers"
-
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
+	"os"
+	"uelei/capivara-sync/db"
+	"uelei/capivara-sync/handlers"
 )
 
 var list, clean bool
@@ -30,15 +21,41 @@ var restoreCmd = &cobra.Command{
 	Short: "Restore a backup from a snapshot",
 	Long:  `Restore the files from the dest to a origin Source.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		var error error
-		var originauth, destauth ssh.AuthMethod
 
-		database, err := db.InitDB("snapshot_files.db")
-		if err != nil {
-			log.Fatal(err)
+		destsource, error := BuildSource(dest, destpass)
+		if error != nil {
+			log.Warn("Error building origin source:", error)
 		}
-		defer database.Close()
+
 		if list {
+			database, er := handlers.GetDatabaseFromRemote(destsource)
+			if er != nil {
+				log.Error("Error getting database from remote:", er)
+			}
+
+			defer func() {
+				log.Info("Clean up environment")
+				if err := database.Close(); err != nil {
+					log.Fatal("Error closing database:", err)
+				}
+
+				db_file, _ := os.ReadFile("snapshot_files.db")
+				// Move the database file to another folder
+				log.Info("Saving database file to remote storage")
+				saveerr := destsource.SaveFile("snapshot_files.db", db_file, "-rw-r--r--")
+				if saveerr != nil {
+					log.Fatal("Error saving database file to local storage:", saveerr)
+				} else {
+					// newPath := "new_folder/snapshot_files.db"
+					if err := os.Remove("snapshot_files.db"); err != nil {
+						log.Error("Error removing local database file:", err)
+					}
+					// err := os.Rename("snapshot_files.db", newPath)
+					// if err != nil {
+					// 	log.Fatalf("Failed to move database file: %v", err)
+				}
+			}()
+
 			fmt.Println("Listing snapshots")
 
 			snaps, err := db.ListSnapShots(database)
@@ -50,74 +67,17 @@ var restoreCmd = &cobra.Command{
 			}
 
 		} else {
-			var destsource, originsource sources.Source
-
-			if strings.Contains(origin, "@") {
-
-				originParts := strings.Split(origin, "@")
-				originUser := originParts[0]
-				hostpaths := strings.Split(originParts[1], ":")
-				originHost := hostpaths[0]
-				originPath := EnsureTrailingSlash(hostpaths[1])
-				fmt.Println("Origin User:", originUser)
-				fmt.Println("Origin Host:", originHost)
-				fmt.Println("Origin Path:", originPath)
-				// Ask for password if not set via flag
-				if originpass == "" {
-					fmt.Print("Enter password: ")
-					bytePassword, err := term.ReadPassword(int(syscall.Stdin))
-					if err != nil {
-						log.Fatal(err)
-					}
-					fmt.Println() // for newline
-					originpass = string(bytePassword)
-
-					originauth = ssh.Password(originpass)
-				}
-				originsource, error = sources.NewSSHSource(originParts[0], originHost+":22", originPath, originauth)
-
-				if error != nil {
-					log.Fatal(error)
-				}
-
-			} else {
-				originsource = sources.Localsource{Localpath: EnsureTrailingSlash(origin)}
-
+			originsource, error := BuildSource(origin, originpass)
+			if error != nil {
+				log.Warn("Error building origin source:", error)
 			}
-			if strings.Contains(dest, "@") {
-				destParts := strings.Split(dest, "@")
-				destUser := destParts[0]
-				hostpaths := strings.Split(destParts[1], ":")
-				destHost := hostpaths[0]
-				destPath := EnsureTrailingSlash(hostpaths[1])
-				fmt.Println("Dest User:", destUser)
-				fmt.Println("Dest Host:", destHost)
-				fmt.Println("Dest Path:", destPath)
 
-				// Ask for password if not set via flag
-				if destpass == "" {
-					fmt.Print("Enter password: ")
-					bytePassword, err := term.ReadPassword(int(syscall.Stdin))
-					if err != nil {
-						log.Fatal(err)
-					}
-					fmt.Println() // for newline
-					destpass = string(bytePassword)
-
-					destauth = ssh.Password(destpass)
-				}
-				destsource, error = sources.NewSSHSource(destParts[0], destHost+":22", destPath, destauth)
-
-				if error != nil {
-					log.Fatal(error)
-				}
-			} else {
-				destsource = sources.Localsource{Localpath: EnsureTrailingSlash(dest)}
+			// starting the handler
+			if err := handlers.Restore(originsource, destsource, snap, clean); err != nil {
+				log.Fatal("Error restoring snapshot:", err)
 			}
-			handlers.Restore(originsource, destsource, snap, clean)
 		}
 
-		fmt.Println("restore called")
 	},
 }
 
@@ -128,23 +88,15 @@ func init() {
 	restoreCmd.Flags().StringVarP(&origin, "origin", "o", "", "origin: local or ssh (required)")
 	restoreCmd.Flags().StringVarP(&dest, "dest", "d", "", "destination: local or ssh (required)")
 
-	// restoreCmd.MarkFlagRequired("origin")
-	// restoreCmd.MarkFlagRequired("dest")
-
 	restoreCmd.Flags().StringVarP(&snap, "snap", "s", "", "snap date to restore if not latest (optional)")
+
+	if err := restoreCmd.MarkFlagRequired("dest"); err != nil {
+		log.Fatal(err)
+	}
 
 	restoreCmd.PersistentFlags().StringVar(&originpass, "origin-password", "", "SSH password (optional, will prompt if not provided)")
 	restoreCmd.PersistentFlags().StringVar(&destpass, "dest-password", "", "SSH password (optional, will prompt if not provided)")
 
 	rootCmd.AddCommand(restoreCmd)
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// restoreCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// restoreCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }

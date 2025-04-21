@@ -2,15 +2,14 @@ package sources
 
 import (
 	"fmt"
+	"github.com/pkg/sftp"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/crypto/ssh"
 	"io"
 	"path"
 	"strings"
 	"time"
-
-	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 )
-import log "github.com/sirupsen/logrus"
 
 type SSHSource struct {
 	Client   *ssh.Client
@@ -70,20 +69,23 @@ func (s *SSHSource) GetFileHash(path string) (string, error) {
 	return parts[0], nil
 }
 
-func (s *SSHSource) ListFiles() ([]FileInfo, error) {
-	files := []FileInfo{}
-	walker := s.SFTP.Walk(s.BasePath)
-	for walker.Step() {
-		if err := walker.Err(); err != nil {
-			continue
+func (s *SSHSource) ListFiles() <-chan FileInfo {
+	ch := make(chan FileInfo)
+	go func() {
+		defer close(ch)
+		walker := s.SFTP.Walk(s.BasePath)
+		for walker.Step() {
+			if err := walker.Err(); err != nil {
+				continue
+			}
+			stat := walker.Stat()
+			ch <- FileInfo{
+				Path:       walker.Path(),
+				Permission: stat.Mode().Perm().String(),
+			}
 		}
-		stat := walker.Stat()
-		files = append(files, FileInfo{
-			Path:       walker.Path(),
-			Permission: stat.Mode().Perm().String(),
-		})
-	}
-	return files, nil
+	}()
+	return ch
 }
 
 func (s *SSHSource) GetFile(path string) ([]byte, error) {
@@ -127,7 +129,7 @@ func (s *SSHSource) SaveFile(path string, data []byte, perm string) error {
 	}
 	defer f.Close()
 
-	fmt.Println("Writing file to remote:", filePath)
+	log.Debug("Writing file to remote:", filePath)
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
@@ -135,7 +137,7 @@ func (s *SSHSource) SaveFile(path string, data []byte, perm string) error {
 	// Step 3: Apply permissions if provided
 	permission, err := FileModeFromString(perm)
 	if err != nil {
-		fmt.Println("Error parsing permission string:", perm, err)
+		log.Error("Error parsing permission string:", perm, err)
 	}
 	if err := s.SFTP.Chmod(filePath, permission); err != nil {
 		return fmt.Errorf("failed to chmod remote file: %w", err)
@@ -152,12 +154,3 @@ func (s *SSHSource) Exists(path string) bool {
 func (s *SSHSource) RemoveFile(path string) error {
 	return s.SFTP.Remove(s.BasePath + path)
 }
-
-// func (s *SSHSource) GetFileHash(path string) (string, error) {
-// 	data, err := s.GetFile(path)
-// 	if err != nil {
-// 		return "", err
-// 	}
-// 	hash := md5.Sum(data)
-// 	return fmt.Sprintf("%x", hash), nil
-// }

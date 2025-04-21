@@ -1,48 +1,36 @@
 package handlers
 
 import (
-	"fmt"
+	log "github.com/sirupsen/logrus"
 	"os"
-
 	"uelei/capivara-sync/compressor"
 	"uelei/capivara-sync/db"
 	"uelei/capivara-sync/sources"
-
-	log "github.com/sirupsen/logrus"
 )
 
 func Restore(origin sources.Source, destination sources.Source, snap_date string, clean bool) error {
-
-	db_file, err := destination.GetFile("snapshot_files.db")
-
-	if err == nil {
-		log.Info("Database file already exists in remote storage")
-		if err := os.WriteFile("snapshot_files.db", db_file, 0644); err != nil {
-			return fmt.Errorf("failed to write file: %v", err)
-		}
-		destination.RemoveFile("snapshot_files.db")
-
+	database, er := GetDatabaseFromRemote(destination)
+	if er != nil {
+		log.Error("Error getting database from remote:", er)
 	}
 
-	database, err := db.InitDB("snapshot_files.db")
-	if err != nil {
-		log.Fatal(err)
-	}
 	defer func() {
-		log.Debug("Clean up environment")
-		database.Close()
-		db_file, _ := os.ReadFile("snapshot_files.db")
+		log.Info("Clean up environment")
+		if err := database.Close(); err != nil {
+			log.Fatal("Error closing database:", err)
+		}
 
+		db_file, _ := os.ReadFile("snapshot_files.db")
 		// Move the database file to another folder
 		log.Info("Saving database file to remote storage")
 		saveerr := destination.SaveFile("snapshot_files.db", db_file, "-rw-r--r--")
-
-		// TODO remove all versions bigger than restored version
 		if saveerr != nil {
 			log.Fatal("Error saving database file to local storage:", saveerr)
 		} else {
 			// newPath := "new_folder/snapshot_files.db"
-			os.Remove("snapshot_files.db")
+			if err := os.Remove("snapshot_files.db"); err != nil {
+				log.Error("Error removing local database file:", err)
+			}
 			// err := os.Rename("snapshot_files.db", newPath)
 			// if err != nil {
 			// 	log.Fatalf("Failed to move database file: %v", err)
@@ -73,12 +61,12 @@ func Restore(origin sources.Source, destination sources.Source, snap_date string
 
 		log.Warn("Clean Flag activated - removing all files in origin that are not in the snapshot")
 
-		localfiles, err := origin.ListFiles()
+		localfiles := origin.ListFiles()
 		if err != nil {
 			log.Fatalf("Error listing files: %v", err)
 		}
 
-		for _, file := range localfiles {
+		for file := range localfiles {
 
 			found := false
 			for _, record := range files {

@@ -2,7 +2,6 @@ package compressor
 
 import (
 	"fmt"
-
 	"github.com/klauspost/compress/zstd"
 )
 
