@@ -26,7 +26,7 @@ jobs:
       ## this will contain a matrix of all of the combinations
       ## we wish to test again:
       matrix:
-        go-version: ['1.17']
+        go-version: ['1.23']
         platform: [ubuntu-latest, macos-latest, windows-latest]
 
     ## Defines the platform for each test run
