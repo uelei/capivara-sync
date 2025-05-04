@@ -22,9 +22,9 @@ var restoreCmd = &cobra.Command{
 	Long:  `Restore the files from the dest to a origin Source.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		destsource, error := BuildSource(dest, destpass)
+		destsource, error := BuildSource(dest, destpass, destuser)
 		if error != nil {
-			log.Warn("Error building origin source:", error)
+			log.Warn("Error building destination source:", error)
 		}
 
 		if list {
@@ -67,7 +67,7 @@ var restoreCmd = &cobra.Command{
 			}
 
 		} else {
-			originsource, error := BuildSource(origin, originpass)
+			originsource, error := BuildSource(origin, originpass, originuser)
 			if error != nil {
 				log.Warn("Error building origin source:", error)
 			}
@@ -94,9 +94,11 @@ func init() {
 		log.Fatal(err)
 	}
 
-	restoreCmd.PersistentFlags().StringVar(&originpass, "origin-password", "", "SSH password (optional, will prompt if not provided)")
-	restoreCmd.PersistentFlags().StringVar(&destpass, "dest-password", "", "SSH password (optional, will prompt if not provided)")
+	restoreCmd.PersistentFlags().StringVar(&originpass, "origin-password", "", "SSH/DAV password (optional, will prompt if not provided)")
+	restoreCmd.PersistentFlags().StringVar(&destpass, "dest-password", "", "SSH/DAV password (optional, will prompt if not provided)")
 
+	restoreCmd.PersistentFlags().StringVar(&originuser, "origin-user", "", "SSH/DAV user (optional, will prompt if not provided)")
+	restoreCmd.PersistentFlags().StringVar(&destuser, "dest-user", "", "SSH/DAV user (optional, will prompt if not provided)")
 	rootCmd.AddCommand(restoreCmd)
 
 }

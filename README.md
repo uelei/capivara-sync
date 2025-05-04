@@ -1,4 +1,10 @@
+
+![Capivara Synct](doc/images/capivara-sync.jpg)
+
 # Capivara Sync
+
+[![Go](https://img.shields.io/badge/Go-1.16%2B-blue.svg)](https://golang.org/dl/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Capivara Sync is a command-line tool designed to simplify file synchronization and backup operations. This project provides several commands to manage and manipulate file paths, backups, and restores efficiently.
 
@@ -9,6 +15,17 @@ The `backup` command allows users to create backups of their files. It ensures d
 
 ### 2. `restore`
 The `restore` command is used to restore files from a backup. It ensures that files are retrieved and placed in their original or specified locations.
+
+### 3. `rsync`
+The `Rsync` command synchronizes files between two directories. It ensures that both directories contain the same files, making it easy to keep data consistent across multiple locations.
+
+
+## Sources
+
+capivara-sync supports the following sources:
+- localsource: Local file system
+- sshsource: Remote file system over SSH
+- webdavsource: WebDAV server
 
 
 ## Installation

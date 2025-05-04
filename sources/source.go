@@ -1,5 +1,7 @@
 package sources
 
+import "time"
+
 type Source interface {
 	ListFiles() <-chan FileInfo
 	GetFile(string) ([]byte, error)
@@ -7,12 +9,15 @@ type Source interface {
 	Exists(string) bool
 	GetFileHash(string) (string, error)
 	RemoveFile(string) error
+	CalculateFileHash([]byte) (string, error)
+	GetFileLastModified(remote_path string) (time.Time, error)
 }
 
 type FileInfo struct {
-	Path       string
-	Md5        string
-	Filename   string
-	Permission string
-	RemoteHash string
+	Path         string
+	Md5          string
+	Filename     string
+	Permission   string
+	RemoteHash   string
+	LastModified time.Time
 }

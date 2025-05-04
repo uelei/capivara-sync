@@ -1,16 +1,19 @@
 package sources
 
 import (
-	"bytes"
-	"crypto/md5"
 	"fmt"
-	"github.com/klauspost/compress/zstd"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"crypto/md5"
+
+	log "github.com/sirupsen/logrus"
+
+	"encoding/hex"
 )
 
 type Localsource struct {
@@ -18,7 +21,7 @@ type Localsource struct {
 }
 
 func (l Localsource) Exists(path string) bool {
-	log.Debug("Checking if file exists:", l.Localpath+path)
+	log.Debug("Checking if file exists on remote:", l.Localpath+path)
 	_, err := os.Stat(l.Localpath + path)
 	return err == nil
 
@@ -81,29 +84,6 @@ func (l Localsource) SaveFile(path string, data []byte, permission string) error
 
 }
 
-func (l Localsource) CompressAndSaveFile(path string, data []byte) error {
-
-	fmt.Println("Saving file zst", path)
-	reader := bytes.NewReader(data)
-	remote_file_name := l.Localpath + path + ".zst"
-	out, _ := os.Create(remote_file_name)
-	encoder, _ := zstd.NewWriter(out, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
-	if _, err := io.Copy(encoder, reader); err != nil {
-		log.Error("Error compressing file:", err)
-	}
-	if err := encoder.Close(); err != nil {
-		log.Error("Error closing encoder:", err)
-	}
-	// in.Close()
-	if err := out.Close(); err != nil {
-		log.Error("Error closing file:", err)
-	}
-
-	fmt.Println("File saved:", path)
-	return nil
-
-}
-
 func FileModeFromString(permStr string) (os.FileMode, error) {
 	if len(permStr) != 10 {
 		return 0, fmt.Errorf("invalid permission string: %q", permStr)
@@ -147,6 +127,13 @@ func FileModeFromString(permStr string) (os.FileMode, error) {
 	return mode, nil
 }
 
+func (l Localsource) CalculateFileHash(filebyte []byte) (string, error) {
+	hash := md5.Sum(filebyte) // returns [16]byte
+	remote_hash := hex.EncodeToString(hash[:])
+
+	return remote_hash, nil
+}
+
 func (l Localsource) ListFiles() <-chan FileInfo {
 	ch := make(chan FileInfo)
 	go func() {
@@ -163,8 +150,9 @@ func (l Localsource) ListFiles() <-chan FileInfo {
 				if err != nil {
 					log.Fatal(err)
 				}
-				log.Debug("File:", path, md5sum, relative_path, info.Mode().String())
-				ch <- FileInfo{Path: relative_path, Md5: md5sum, Filename: d.Name(), Permission: info.Mode().Perm().String()}
+				modTime := info.ModTime()
+				log.Debug("File: ", path, " ", md5sum, " ", relative_path, " ", info.Mode().String())
+				ch <- FileInfo{Path: relative_path, Md5: md5sum, Filename: d.Name(), Permission: info.Mode().Perm().String(), LastModified: modTime}
 			}
 			return nil
 		})
@@ -176,4 +164,13 @@ func (l Localsource) ListFiles() <-chan FileInfo {
 	}()
 
 	return ch
+}
+
+func (l Localsource) GetFileLastModified(remote_path string) (time.Time, error) {
+	filePath := l.Localpath + remote_path
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		log.Error("Error getting file info:", err)
+	}
+	return fileInfo.ModTime(), nil
 }
