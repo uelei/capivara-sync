@@ -7,6 +7,7 @@ import (
 	"uelei/capivara-sync/sources"
 
 	log "github.com/sirupsen/logrus"
+	"time"
 )
 
 func GetDatabaseFromRemote(destination sources.Source) (*sql.DB, error) {
@@ -31,4 +32,13 @@ func GetDatabaseFromRemote(destination sources.Source) (*sql.DB, error) {
 		log.Fatal(err)
 	}
 	return database, nil
+}
+
+func TimeToString(t time.Time) string {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		log.Error("Error loading timezone:", err)
+		return t.Format("2006-01-02 15:04:05")
+	}
+	return t.In(loc).Format("2006-01-02 15:04:05")
 }

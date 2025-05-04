@@ -21,19 +21,14 @@ func Restore(origin sources.Source, destination sources.Source, snap_date string
 		}
 
 		db_file, _ := os.ReadFile("snapshot_files.db")
-		// Move the database file to another folder
 		log.Info("Saving database file to remote storage")
 		saveerr := destination.SaveFile("snapshot_files.db", db_file, "-rw-r--r--")
 		if saveerr != nil {
 			log.Fatal("Error saving database file to local storage:", saveerr)
 		} else {
-			// newPath := "new_folder/snapshot_files.db"
 			if err := os.Remove("snapshot_files.db"); err != nil {
 				log.Error("Error removing local database file:", err)
 			}
-			// err := os.Rename("snapshot_files.db", newPath)
-			// if err != nil {
-			// 	log.Fatalf("Failed to move database file: %v", err)
 		}
 	}()
 	var snapshotp *db.SnapShotRecord

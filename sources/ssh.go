@@ -1,6 +1,8 @@
 package sources
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"github.com/pkg/sftp"
 	log "github.com/sirupsen/logrus"
@@ -79,9 +81,12 @@ func (s *SSHSource) ListFiles() <-chan FileInfo {
 				continue
 			}
 			stat := walker.Stat()
+			// Get last modification time
+			modTime := stat.ModTime()
 			ch <- FileInfo{
-				Path:       walker.Path(),
-				Permission: stat.Mode().Perm().String(),
+				Path:         walker.Path(),
+				Permission:   stat.Mode().Perm().String(),
+				LastModified: modTime,
 			}
 		}
 	}()
@@ -153,4 +158,38 @@ func (s *SSHSource) Exists(path string) bool {
 
 func (s *SSHSource) RemoveFile(path string) error {
 	return s.SFTP.Remove(s.BasePath + path)
+}
+
+func (s *SSHSource) CalculateFileHash(filebyte []byte) (string, error) {
+	hash := md5.Sum(filebyte) // returns [16]byte
+	remote_hash := hex.EncodeToString(hash[:])
+
+	return remote_hash, nil
+}
+
+func (s *SSHSource) GetFileLastModified(remote_path string) (time.Time, error) {
+	session, err := s.Client.NewSession()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	defer session.Close()
+
+	// Command to get the last modified time of the file
+	cmd := fmt.Sprintf("stat -c %%y %s", remote_path)
+	println("cmd : ", cmd)
+	output, err := session.Output(cmd)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to execute command: %w", err)
+	}
+	result_date := strings.TrimSpace(string(output))
+
+	const layout = "2006-01-02 15:04:05.999999999 -0700"
+	parsedTime, err := time.Parse(layout, result_date)
+	if err != nil {
+		fmt.Printf("Error parsing time: %v\n", err)
+		return time.Time{}, err
+	}
+	// Return the output as the last modified time
+	return parsedTime, nil
+
 }
